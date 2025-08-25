@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5>Users</h5>
+        <div class="display-6">{{ users_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5>Encodings</h5>
+        <div class="display-6">{{ enc_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5>Logs</h5>
+        <div class="display-6">{{ logs_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h4 class="mt-4">Recent Events</h4>
+<div class="table-responsive">
+  <table class="table table-striped align-middle">
+    <thead>
+      <tr><th>When</th><th>Status</th><th>Name</th><th>Reason/Distance</th><th>Capture</th></tr>
+    </thead>
+    <tbody id="recent-logs">
+      {% for r in recent %}
+      <tr>
+        <td>{{ r["ts"] }}</td>
+        <td>
+          {% if r["status"] == "granted" %}
+          <span class="badge text-bg-success">granted</span>
+          {% else %}
+          <span class="badge text-bg-danger">denied</span>
+          {% endif %}
+        </td>
+        <td>{{ r["name"] }}</td>
+        <td>{{ r["reason"] or "" }}</td>
+        <td>
+          {% if r["image_path"] %}
+          <img src="/captures/{{ r['image_path'] }}" alt="" style="height:60px;border-radius:6px;">
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

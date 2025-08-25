@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h3>All Logs</h3>
+<div class="table-responsive">
+  <table class="table table-striped align-middle">
+    <thead><tr><th>When</th><th>Status</th><th>Name</th><th>Reason</th><th>Capture</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r["ts"] }}</td>
+        <td>
+          {% if r["status"] == "granted" %}
+          <span class="badge text-bg-success">granted</span>
+          {% else %}
+          <span class="badge text-bg-danger">denied</span>
+          {% endif %}
+        </td>
+        <td>{{ r["name"] }}</td>
+        <td>{{ r["reason"] or "" }}</td>
+        <td>
+          {% if r["image_path"] %}
+          <img src="/captures/{{ r['image_path'] }}" style="height:60px;border-radius:6px;">
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
