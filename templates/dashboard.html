@@ -27,6 +27,7 @@
   </div>
 </div>
 
+<!-- Camera Stream -->
 <div class="row mt-4">
   <div class="col-12">
     <div class="card shadow-sm">
@@ -41,7 +42,10 @@
         <div class="row">
           <div class="col-md-8">
             <div class="position-relative">
-              <img id="videoStream" src="" alt="Camera feed" class="img-fluid rounded" style="width: 100%; min-height: 300px; background-color: #f8f9fa;">
+              <!-- Main MJPEG stream -->
+              <img id="videoStream" src="" alt="Camera feed" 
+                   class="img-fluid rounded" 
+                   style="width: 100%; min-height: 300px; background-color: #f8f9fa;">
               <div id="streamStatus" class="position-absolute top-0 end-0 m-2">
                 <span class="badge bg-secondary">Not Connected</span>
               </div>
@@ -50,13 +54,17 @@
             <div class="mt-3">
               <label class="form-label">Stream URL</label>
               <div class="input-group input-group-sm">
-                <input type="text" id="streamUrl" class="form-control" value="http://192.168.0.123:81/stream">
+                <input type="text" id="streamUrl" class="form-control" 
+                       value="/camera/stream">
                 <button class="btn btn-outline-secondary" type="button" id="updateUrl">Update</button>
               </div>
-              <div class="form-text">Default ESP32-CAM stream URL is typically http://[ESP_IP]:81/stream</div>
+              <div class="form-text">
+                Default ESP32-CAM stream URL: <code>http://[ESP_IP]:81/stream</code>
+              </div>
             </div>
           </div>
           
+          <!-- Stream Info -->
           <div class="col-md-4">
             <div class="card">
               <div class="card-header bg-secondary text-white">
@@ -93,6 +101,7 @@
   </div>
 </div>
 
+<!-- Logs -->
 <h4 class="mt-4">Recent Events</h4>
 <div class="table-responsive">
   <table class="table table-striped align-middle">
@@ -114,7 +123,8 @@
         <td>{{ r["reason"] or "" }}</td>
         <td>
           {% if r["image_path"] %}
-          <img src="/captures/{{ r['image_path'] }}" alt="" style="height:60px;border-radius:6px;">
+          <img src="/captures/{{ r['image_path'] }}" alt="" 
+               style="height:60px;border-radius:6px;">
           {% endif %}
         </td>
       </tr>
@@ -123,154 +133,154 @@
   </table>
 </div>
 
+<!-- inside your dashboard.html, replace the previous <script>...</script> block with this -->
 <script>
-  document.addEventListener('DOMContentLoaded', function() {
-    // Elements
-    const videoStream = document.getElementById('videoStream');
-    const startBtn = document.getElementById('startStream');
-    const stopBtn = document.getElementById('stopStream');
-    const streamStatus = document.getElementById('streamStatus');
-    const connectionStatus = document.getElementById('connectionStatus');
-    const lastUpdate = document.getElementById('lastUpdate');
-    const frameCount = document.getElementById('frameCount');
-    const errorCount = document.getElementById('errorCount');
-    const streamUrl = document.getElementById('streamUrl');
-    const updateUrlBtn = document.getElementById('updateUrl');
-    const fpsSlider = document.getElementById('fpsSlider');
-    const fpsValue = document.getElementById('fpsValue');
-    const captureFrameBtn = document.getElementById('captureFrame');
-    
-    // Stream variables
-    let streamInterval = null;
-    let currentFps = 10;
-    let framesReceived = 0;
-    let errors = 0;
-    let lastFrameTime = 0;
-    
-    // Update FPS display
-    fpsSlider.addEventListener('input', function() {
-      currentFps = parseInt(this.value);
-      fpsValue.textContent = currentFps;
-      
-      if (streamInterval) {
-        stopStream();
-        startStream();
-      }
-    });
-    
-    // Update URL
-    updateUrlBtn.addEventListener('click', function() {
-      if (streamInterval) {
-        stopStream();
-        startStream();
-      }
-    });
-    
-    // Start stream
-    startBtn.addEventListener('click', startStream);
-    
-    // Stop stream
-    stopBtn.addEventListener('click', stopStream);
-    
-    // Capture frame
-    captureFrameBtn.addEventListener('click', function() {
-      if (videoStream.src) {
-        const link = document.createElement('a');
-        link.download = 'capture-' + new Date().toISOString().replace(/:/g, '-') + '.jpg';
-        link.href = videoStream.src;
-        link.click();
-      }
-    });
-    
-    function startStream() {
-      // Clear any existing interval
-      if (streamInterval) {
-        clearInterval(streamInterval);
-      }
-      
-      // Update UI
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
-      streamStatus.innerHTML = '<span class="badge bg-success">Connected</span>';
-      connectionStatus.textContent = 'Connecting...';
-      
-      // Set up the stream with cache busting
-      const url = streamUrl.value + '?cache=' + new Date().getTime();
-      videoStream.src = url;
-      
-      // Set up periodic refresh based on FPS
-      const intervalMs = Math.round(1000 / currentFps);
-      streamInterval = setInterval(updateStream, intervalMs);
-      
-      // Reset counters
-      framesReceived = 0;
-      errors = 0;
+document.addEventListener('DOMContentLoaded', function() {
+  const videoStream = document.getElementById('videoStream');
+  const startBtn = document.getElementById('startStream');
+  const stopBtn = document.getElementById('stopStream');
+  const streamStatus = document.getElementById('streamStatus');
+  const connectionStatus = document.getElementById('connectionStatus');
+  const lastUpdate = document.getElementById('lastUpdate');
+  const frameCount = document.getElementById('frameCount');
+  const errorCount = document.getElementById('errorCount');
+  const streamUrl = document.getElementById('streamUrl');
+  const updateUrlBtn = document.getElementById('updateUrl');
+  const fpsSlider = document.getElementById('fpsSlider');
+  const fpsValue = document.getElementById('fpsValue');
+  const captureFrameBtn = document.getElementById('captureFrame');
+
+  // default to proxied stream
+  if (!streamUrl.value) streamUrl.value = '/camera/stream';
+
+  let streamInterval = null;
+  let currentFps = parseInt(fpsSlider.value || 10);
+  let framesReceived = 0;
+  let errors = 0;
+  let lastFrameTime = 0;
+
+  fpsSlider.addEventListener('input', function() {
+    currentFps = parseInt(this.value);
+    fpsValue.textContent = currentFps;
+    if (streamInterval) {
+      stopStream();
+      startStream();
+    }
+  });
+
+  updateUrlBtn.addEventListener('click', function() {
+    if (streamInterval) {
+      stopStream();
+      startStream();
+    }
+  });
+
+  startBtn.addEventListener('click', startStream);
+  stopBtn.addEventListener('click', stopStream);
+
+  // capture snapshot via the server endpoint (more reliable than reading the <img> src)
+  captureFrameBtn.addEventListener('click', async function() {
+    captureFrameBtn.disabled = true;
+    captureFrameBtn.innerHTML = 'Capturing...';
+    try {
+      const r = await fetch('/camera/snapshot');
+      if (!r.ok) throw new Error('Snapshot failed: ' + r.status);
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+
+      // show quick preview in a new tab and trigger download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'snapshot-' + new Date().toISOString().replace(/:/g, '-') + '.jpg';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Snapshot error: ' + err.message);
+    } finally {
+      captureFrameBtn.disabled = false;
+      captureFrameBtn.innerHTML = 'Capture Frame';
+    }
+  });
+
+  function startStream() {
+    if (streamInterval) clearInterval(streamInterval);
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    streamStatus.innerHTML = '<span class="badge bg-success">Connected</span>';
+    connectionStatus.textContent = 'Connecting...';
+
+    const url = streamUrl.value + '?cache=' + Date.now();
+    videoStream.src = url;
+
+    const intervalMs = Math.round(1000 / currentFps);
+    streamInterval = setInterval(updateStream, intervalMs);
+
+    framesReceived = 0;
+    errors = 0;
+    updateCounters();
+  }
+
+  function stopStream() {
+    if (streamInterval) {
+      clearInterval(streamInterval);
+      streamInterval = null;
+    }
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    streamStatus.innerHTML = '<span class="badge bg-secondary">Not Connected</span>';
+    connectionStatus.textContent = 'Disconnected';
+    videoStream.src = '';
+  }
+
+  function updateStream() {
+    // For proxied MJPEG the browser will stream continuously via the <img> element.
+    // However changing img.src periodically helps 'refresh' if the camera or proxy buffers
+    // stale frames. We use a cache-buster timestamp.
+    const now = Date.now();
+    try {
+      videoStream.src = streamUrl.value + (streamUrl.value.indexOf('?') === -1 ? '?' : '&') + 't=' + now;
+      framesReceived++;
+      lastFrameTime = new Date();
       updateCounters();
-    }
-    
-    function stopStream() {
-      if (streamInterval) {
-        clearInterval(streamInterval);
-        streamInterval = null;
-      }
-      
-      // Update UI
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      streamStatus.innerHTML = '<span class="badge bg-secondary">Not Connected</span>';
-      connectionStatus.textContent = 'Disconnected';
-      videoStream.src = '';
-    }
-    
-    function updateStream() {
-      const now = new Date();
-      const cacheBuster = '&t=' + now.getTime(); // Cache buster
-      
-      // Update the image source to force refresh
-      if (videoStream.src) {
-        videoStream.src = streamUrl.value + '?cache=' + now.getTime();
-        
-        // Update counters
-        framesReceived++;
-        lastFrameTime = now;
-        updateCounters();
-      }
-    }
-    
-    function updateCounters() {
-      frameCount.textContent = framesReceived;
-      errorCount.textContent = errors;
-      
-      if (lastFrameTime) {
-        lastUpdate.textContent = lastFrameTime.toLocaleTimeString();
-      }
-      
-      // Update connection status based on recent activity
-      const now = new Date();
-      if (lastFrameTime && (now - lastFrameTime) > 3000) {
-        connectionStatus.textContent = 'Lagging';
-        streamStatus.innerHTML = '<span class="badge bg-warning">Lagging</span>';
-      } else if (lastFrameTime) {
-        connectionStatus.textContent = 'Connected';
-      }
-    }
-    
-    // Handle image loading errors
-    videoStream.addEventListener('error', function() {
+    } catch (e) {
       errors++;
       updateCounters();
-      
-      // Try to reconnect if we have too many errors
-      if (errors > 5 && streamInterval) {
-        stopStream();
-        setTimeout(startStream, 2000);
-      }
-    });
-    
-    // Handle successful image load
-    videoStream.addEventListener('load', function() {
+    }
+  }
+
+  function updateCounters() {
+    frameCount.textContent = framesReceived;
+    errorCount.textContent = errors;
+    if (lastFrameTime) {
+      lastUpdate.textContent = lastFrameTime.toLocaleTimeString();
+    }
+    const now = new Date();
+    if (lastFrameTime && (now - lastFrameTime) > 3000) {
+      connectionStatus.textContent = 'Lagging';
+      streamStatus.innerHTML = '<span class="badge bg-warning">Lagging</span>';
+    } else if (lastFrameTime) {
       connectionStatus.textContent = 'Connected';
-    });
+      streamStatus.innerHTML = '<span class="badge bg-success">Connected</span>';
+    }
+  }
+
+  videoStream.addEventListener('error', function() {
+    errors++;
+    updateCounters();
+    if (errors > 5 && streamInterval) {
+      stopStream();
+      setTimeout(startStream, 2000);
+    }
   });
+
+  videoStream.addEventListener('load', function() {
+    connectionStatus.textContent = 'Connected';
+    lastFrameTime = new Date();
+    updateCounters();
+  });
+});
 </script>
+
 {% endblock %}

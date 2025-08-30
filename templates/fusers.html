@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h4 class="mb-3">Add User</h4>
+        <form action="/users/add" method="post" enctype="multipart/form-data" id="userForm">
+          <div class="mb-3">
+            <label class="form-label">Name</label>
+            <input name="name" class="form-control" required placeholder="e.g., John Doe">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Face Images (JPEG/PNG) - Upload multiple from different angles</label>
+            <input type="file" name="files[]" class="form-control" accept="image/*" multiple required>
+            <div class="form-text">For best results, upload 3-5 images with different lighting and angles</div>
+          </div>
+          <button class="btn btn-primary" id="submitBtn">Upload & Enroll</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h4 class="mb-3">Existing Users</h4>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Encodings</th>
+              <th style="width:120px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for u in users %}
+            <tr>
+              <td>{{ u["name"] }}</td>
+              <td>
+                {% if u["encoding_count"] > 0 %}
+                  <span class="badge bg-success">{{ u["encoding_count"] }}</span>
+                {% else %}
+                  <span class="badge bg-warning">0</span>
+                {% endif %}
+              </td>
+              <td>
+                <form action="/users/delete/{{ u['id'] }}" method="post" onsubmit="return confirm('Delete user & all encodings?');">
+                  <button class="btn btn-sm btn-outline-danger">Delete</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3">No users yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('userForm').addEventListener('submit', function() {
+  // Show loading state
+  const submitBtn = document.getElementById('submitBtn');
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+});
+</script>
+{% endblock %}

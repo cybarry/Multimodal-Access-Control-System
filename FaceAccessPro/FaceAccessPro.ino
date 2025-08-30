@@ -1,53 +1,33 @@
+/* FaceAccessPro.ino
+   ESP32-CAM: capture -> POST /api/recognize -> if granted, call ESP32-S /unlock
+*/
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include "esp_camera.h"
+#include "esp_http_server.h"
 
-// ====== WiFi ======
+// WiFi
 const char* ssid     = "cybarry";
 const char* password = "cybarryinc";
 
-// ====== Server ======
+// Backend server (Flask)
 String serverRecognize = "http://192.168.0.123:5000/api/recognize";
 String serverHealth    = "http://192.168.0.123:5000/api/health";
-String apiKey          = "cybarry";     // must match server
+String apiKey          = "cybarry";     // must match Flask
 
-// ====== Relay ======
-// NOTE: On ESP32-CAM AI Thinker, the on-board flash LED is GPIO 4 (via transistor).
-// GPIO 2 is usually the small on-board blue LED. If you're driving an external relay,
-// GPIO 4 is often the safer choice. Change if needed:
-#define RELAY_PIN 2               // or 4 if you're using the flash LED transistor path
-const uint32_t UNLOCK_MS = 5000;  // door unlock duration
-bool doorUnlocked = false;
-uint32_t unlockStart = 0;
+// Lock controller (ESP32-S) — EDIT THIS to your ESP32-S IP
+const char* LOCK_CONTROLLER_IP = "192.168.0.183";
+const int   LOCK_CONTROLLER_PORT = 8080;
 
-// ====== Capture/Retry ======
-const uint32_t CAPTURE_INTERVAL_MS = 1500;
-const uint8_t  CAPTURE_RETRIES     = 3;
-
-// ====== Camera Model ======
+// Camera and capture settings
 #define CAMERA_MODEL_AI_THINKER
 #include "camera_pins.h"
-
+const uint32_t CAPTURE_INTERVAL_MS = 1500;
+const uint8_t  CAPTURE_RETRIES     = 3;
 uint32_t lastCapture = 0;
 
-void connectWiFi() {
-  Serial.printf("Connecting to WiFi '%s' ...\n", ssid);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  uint8_t tries = 0;
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-    if (++tries > 40) {
-      Serial.println("\nWiFi retry...");
-      WiFi.disconnect(true);
-      delay(1000);
-      WiFi.begin(ssid, password);
-      tries = 0;
-    }
-  }
-  Serial.printf("\nWiFi connected. IP: %s\n", WiFi.localIP().toString().c_str());
-}
+// Stream server (optional preview)
+httpd_handle_t stream_httpd = NULL;
 
 bool initCamera() {
   camera_config_t config;
@@ -73,7 +53,7 @@ bool initCamera() {
   config.pixel_format = PIXFORMAT_JPEG;
 
   if (psramFound()) {
-    config.frame_size   = FRAMESIZE_QVGA;  // stable & light; SVGA works if needed
+    config.frame_size   = FRAMESIZE_QVGA;
     config.jpeg_quality = 10;
     config.fb_count     = 2;
   } else {
@@ -91,66 +71,155 @@ bool initCamera() {
   return true;
 }
 
+esp_err_t stream_handler(httpd_req_t *req) {
+  camera_fb_t * fb = NULL;
+  esp_err_t res = ESP_OK;
+  size_t jpg_buf_len = 0;
+  uint8_t * jpg_buf = NULL;
+  char part_buf[64];
+  res = httpd_resp_set_type(req, "multipart/x-mixed-replace;boundary=frame");
+  if (res != ESP_OK) return res;
+
+  while (true) {
+    fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Camera capture failed in stream_handler");
+      res = ESP_FAIL;
+    } else {
+      if (fb->format != PIXFORMAT_JPEG) {
+        bool jpeg_converted = frame2jpg(fb, 80, &jpg_buf, &jpg_buf_len);
+        if (!jpeg_converted) {
+          Serial.println("JPEG compression failed");
+          esp_camera_fb_return(fb);
+          res = ESP_FAIL;
+        }
+      } else {
+        jpg_buf_len = fb->len;
+        jpg_buf = fb->buf;
+      }
+      if (res == ESP_OK) {
+        size_t hlen = snprintf(part_buf, sizeof(part_buf),
+                               "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
+                               (unsigned)jpg_buf_len);
+        res = httpd_resp_send_chunk(req, part_buf, hlen);
+      }
+      if (res == ESP_OK) {
+        res = httpd_resp_send_chunk(req, (const char *)jpg_buf, jpg_buf_len);
+      }
+      if (res == ESP_OK) {
+        res = httpd_resp_send_chunk(req, "\r\n", 2);
+      }
+      if (fb->format != PIXFORMAT_JPEG) free(jpg_buf);
+      esp_camera_fb_return(fb);
+    }
+    if (res != ESP_OK) break;
+  }
+  return res;
+}
+
+void startCameraServer(){
+  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  config.server_port = 81;
+  httpd_uri_t stream_uri = {
+    .uri       = "/stream",
+    .method    = HTTP_GET,
+    .handler   = stream_handler,
+    .user_ctx  = NULL
+  };
+  if (httpd_start(&stream_httpd, &config) == ESP_OK) {
+    httpd_register_uri_handler(stream_httpd, &stream_uri);
+  }
+}
+
+// POST a frame to the Flask recognition endpoint
 bool postFrame(const uint8_t *buf, size_t len, String &response) {
   if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
+    Serial.println("WiFi lost, reconnecting...");
+    WiFi.disconnect(true);
+    WiFi.begin(ssid, password);
+    uint8_t tries = 0;
+    while (WiFi.status() != WL_CONNECTED && ++tries < 60) {
+      delay(200); Serial.print(".");
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("\nFailed to reconnect WiFi");
+      return false;
+    }
   }
 
   WiFiClient client;
   HTTPClient http;
-
-  // FIX: use the correct variable name (serverRecognize), and pass client explicitly
   if (!http.begin(client, serverRecognize)) {
-    Serial.println("HTTP begin failed");
+    Serial.println("HTTP begin failed (recognize)");
     return false;
   }
-
   http.addHeader("Content-Type", "image/jpeg");
   http.addHeader("X-API-Key", apiKey);
 
-  // Cast away const for POST(), safe here because http.POST doesn't modify the buffer
   int code = http.POST((uint8_t*)buf, len);
-
   if (code > 0) {
     response = http.getString();
     http.end();
     return (code == 200);
   } else {
-    Serial.printf("Error in POST: %d\n", code);
+    Serial.printf("Error in POST to /api/recognize: %d\n", code);
     http.end();
     return false;
   }
 }
 
-void unlockDoor() {
-  digitalWrite(RELAY_PIN, HIGH);
-  doorUnlocked = true;
-  unlockStart = millis();
-  Serial.println("Door UNLOCKED.");
-}
-
-void lockDoorIfTime() {
-  if (doorUnlocked && (millis() - unlockStart >= UNLOCK_MS)) {
-    digitalWrite(RELAY_PIN, LOW);
-    doorUnlocked = false;
-    Serial.println("Door LOCKED.");
+// Call ESP32-S /unlock with retries
+bool callLockControllerUnlock(int retries=3, int timeout_ms=2500) {
+  String url = String("http://") + LOCK_CONTROLLER_IP + ":" + String(LOCK_CONTROLLER_PORT) + "/unlock";
+  for (int i=0; i<retries; ++i) {
+    WiFiClient client;
+    HTTPClient http;
+    http.setTimeout(timeout_ms / 1000); // seconds-ish; library uses seconds param in begin with client? library has setTimeout
+    if (!http.begin(client, url)) {
+      Serial.println("HTTP begin failed (unlock)");
+      http.end();
+      delay(200);
+      continue;
+    }
+    int code = http.GET();
+    String resp = (code > 0) ? http.getString() : "";
+    http.end();
+    Serial.printf("Unlock call attempt %d -> code=%d resp=%s\n", i+1, code, resp.c_str());
+    if (code == 200) {
+      // optionally parse JSON for status
+      if (resp.indexOf("ok") >= 0 || resp.indexOf("status") >= 0) return true;
+      return true;
+    }
+    delay(250);
   }
+  return false;
 }
 
 void setup() {
   Serial.begin(115200);
-  pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW);
-
-  // IDE: Tools → PSRAM: Enabled, Partition: Huge APP
-  connectWiFi();
-  if (!initCamera()) {
-    Serial.println("Restarting in 5s due to camera fail...");
-    delay(5000);
-    ESP.restart();
+  Serial.println();
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.printf("Connecting to WiFi '%s' ...\n", ssid);
+  uint8_t tries = 0;
+  while (WiFi.status() != WL_CONNECTED && ++tries < 80) {
+    delay(250); Serial.print(".");
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\nWiFi connected. IP: %s\n", WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("\nWiFi failed to connect.");
   }
 
-  // Optional health ping
+  if (!initCamera()) {
+    Serial.println("Camera init failed; restarting in 5s...");
+    delay(5000); ESP.restart();
+  }
+
+  startCameraServer();
+  Serial.println("Camera stream ready on port 81.");
+
+  // Optional server health ping
   WiFiClient client;
   HTTPClient http;
   if (http.begin(client, serverHealth)) {
@@ -158,14 +227,10 @@ void setup() {
     int code = http.GET();
     Serial.printf("Server health: %d\n", code);
     http.end();
-  } else {
-    Serial.println("Health check: HTTP begin failed");
   }
 }
 
 void loop() {
-  lockDoorIfTime();
-
   if (millis() - lastCapture < CAPTURE_INTERVAL_MS) return;
   lastCapture = millis();
 
@@ -189,7 +254,15 @@ void loop() {
   }
 
   Serial.printf("Server: %s\n", resp.c_str());
-  if (resp.indexOf("granted") >= 0) {
-    if (!doorUnlocked) unlockDoor();
+
+  // If server said "granted", call lock controller unlock endpoint
+  if (resp.indexOf("\"status\":\"granted\"") >= 0 || resp.indexOf("\"granted\"") >= 0) {
+    Serial.println("Face Access GRANTED → Sending unlock to ESP32S...");
+    bool uok = callLockControllerUnlock(3, 3000);
+    if (uok) {
+      Serial.println("Unlock command succeeded.");
+    } else {
+      Serial.println("Unlock command FAILED after retries.");
+    }
   }
 }
